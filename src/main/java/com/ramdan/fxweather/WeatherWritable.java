@@ -20,9 +20,11 @@ public class WeatherWritable implements Writable
     public void add(Header header, Object text)
     {
         int headerFlag = 0x1 << header.ordinal();
+        String str = text instanceof Double || text instanceof Float ?
+            String.format("%.2f", text) : text.toString().trim();
         headerBitfield |= headerFlag;
-        builder.append(' ');
-        builder.append(text.toString());
+        builder.append(" ");
+        builder.append(str);
     }
 
     public boolean empty() { return headerBitfield == 0x0; }

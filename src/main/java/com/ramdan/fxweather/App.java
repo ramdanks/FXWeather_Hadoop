@@ -2,6 +2,7 @@ package com.ramdan.fxweather;
 
 import java.io.*;
 
+import java.time.LocalDate;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -19,6 +20,7 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 public class App
 {
     private static final String YEAR_FILTER = "2021";
+    private static final int MAX_DAY_OF_YEAR = 292;
     private static final Header[] HEADERS = Header.values();
     private static final int ENTRY_LENGTH = HEADERS[HEADERS.length - 1].idxColEnd;
 
@@ -56,7 +58,7 @@ public class App
     {
         private final StringBuilder datafield = new StringBuilder(ENTRY_LENGTH * 24);
         private final boolean[] missingHeaders = new boolean[HEADERS.length];
-        private final String days[][] = new String[365][24];
+        private final String days[][] = new String[MAX_DAY_OF_YEAR][24];
 
         @Override
         public void reduce(IntWritable key, Iterable<Text> values, Context context)
@@ -71,8 +73,9 @@ public class App
                 String row = val.toString();
                 CharSequence date = Header.UTC_DATE.getSequence(row);
                 CharSequence time = Header.UTC_TIME.getSequence(row);
-                int dayOfYear = Header.parseDate(date);
-                int hourOfDay = Integer.parseInt(date.subSequence(0, 2).toString());
+                int dayOfYear = Header.getDayOfYear(date) - 1;
+                int hourOfDay = Integer.parseInt(time.subSequence(0, 2).toString());
+                if (dayOfYear >= MAX_DAY_OF_YEAR) continue;
                 days[dayOfYear][hourOfDay] = row;
                 for (Header header : HEADERS)
                 {
@@ -82,12 +85,13 @@ public class App
                 }
             }
             // filter using accumulator
-            for (int day = 0; day < 365; ++day)
+            for (int day = 0; day < MAX_DAY_OF_YEAR; ++day)
             {
-                double bufferNumber[] = new double[24];
+                Double bufferNumber[] = new Double[24];
                 WeatherWritable writable = new WeatherWritable(1000);
                 for (Header header : HEADERS)
                 {
+                    Object fieldValue = null;
                     int idx = header.ordinal();
                     if (missingHeaders[idx]) continue;
                     // convert to number
@@ -97,51 +101,47 @@ public class App
                         for (int i = 0; i < 24; ++i)
                         {
                             String row = days[day][i];
-                            if (days[day][i] != null)
-                            {
-                                bufferNumber[i] = header.isMissing(row) ?
-                                    Double.NaN : Double.parseDouble(header.getString(row));
-                            }
+                            bufferNumber[i] = header.isMissing(row) ? null : Double.parseDouble(header.getString(row));
                         }
                     }
                     // write as requested
                     if (header.accumulate == Accumulate.MIN)
                     {
                         double minimum = Double.MAX_VALUE;
-                        for (double val : bufferNumber)
-                            if (val < minimum)
+                        for (Double val : bufferNumber)
+                            if (val != null && val < minimum)
                                 minimum = val;
-                        if (minimum == Double.MAX_VALUE)
-                            minimum = Double.NaN;
-                        writable.add(header, minimum);
+                        fieldValue = minimum == Double.MAX_VALUE ? null : minimum;
                     }
                     else if (header.accumulate == Accumulate.MAX)
                     {
                         double maximum = Double.MIN_VALUE;
-                        for (double val : bufferNumber)
-                            if (val > maximum)
+                        for (Double val : bufferNumber)
+                            if (val != null && val > maximum)
                                 maximum = val;
-                        if (maximum == Double.MIN_VALUE)
-                            maximum = Double.NaN;
-                        writable.add(header, maximum);
+                        fieldValue = maximum == Double.MIN_VALUE ? null : maximum;
                     }
                     else if (header.accumulate == Accumulate.AVG)
                     {
                         double total = 0.0;
                         int count = 0;
-                        for (double val : bufferNumber)
+                        for (Double val : bufferNumber)
                         {
-                            total += val;
-                            ++count;
+                            if (val != null)
+                            {
+                                total += val;
+                                ++count;
+                            }
                         }
-                        writable.add(header, total == 0 ? total : total / count);
+                        fieldValue = count == 0 ? null : total / count;
                     }
                     else if (header.accumulate == Accumulate.SUM)
                     {
                         double total = 0.0;
-                        for (double val : bufferNumber)
-                            total += val;
-                        writable.add(header, total);
+                        for (Double val : bufferNumber)
+                            if (val != null)
+                                total += val;
+                        fieldValue = total;
                     }
                     else if (header.accumulate == Accumulate.FMAX)
                     {
@@ -163,7 +163,7 @@ public class App
                                 objectRef.set(k);
                             }
                         });
-                        writable.add(header, objectRef);
+                        fieldValue = objectRef.get();
                     }
                     else if (header.accumulate == Accumulate.FMIN)
                     {
@@ -185,32 +185,30 @@ public class App
                                 objectRef.set(k);
                             }
                         });
-                        writable.add(header, objectRef);
+                        fieldValue = objectRef.get();
                     }
                     else if (header.accumulate == Accumulate.BEGIN)
                     {
-                        Object value = Double.NaN;
                         for (int hour = 0; hour < 24; ++hour)
                         {
                             if (header.isMissing(days[day][hour])) continue;
-                            value = header.getSequence(days[day][hour]);
+                            fieldValue = header.getSequence(days[day][hour]);
                             break;
                         }
-                        writable.add(header, value);
                     }
                     else if (header.accumulate == Accumulate.END)
                     {
-                        Object value = Double.NaN;
                         for (int hour = 23; hour >= 0; ++hour)
                         {
                             if (header.isMissing(days[day][hour])) continue;
-                            value = header.getSequence(days[day][hour]);
+                            fieldValue = header.getSequence(days[day][hour]);
                             break;
                         }
-                        writable.add(header, value);
                     }
+                    // only add as value when necessary
+                    if (fieldValue != null)
+                        writable.add(header, fieldValue);
                 }
-                if (writable.empty()) continue;
                 // output location per day
                 String keyout = String.format("%d.%d", key.get(), day);
                 context.write(new Text(keyout), writable);

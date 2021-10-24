@@ -72,19 +72,15 @@ public enum Header
     public boolean isMissing(String string)
     {
         if (string == null) return true;
-        try
-        {
-            CharSequence sequence = getSequence(string);
-            return MISSING_DATA_PATTERN.matcher(sequence).matches();
-        }
-        catch (Throwable ignored) { return true; }
+        CharSequence sequence = getSequence(string);
+        return MISSING_DATA_PATTERN.matcher(sequence).matches();
     }
 
     public static int parseInt(CharSequence sequence)       { return (int) parseFloat(sequence); }
     public static float parseFloat(CharSequence sequence)   { return Float.parseFloat(sequence.toString()); }
     public static double parseDouble(CharSequence sequence) { return Double.parseDouble(sequence.toString()); }
     public static byte parseByte(CharSequence sequence)     { return Byte.valueOf(sequence.toString()); }
-    public static int parseDate(CharSequence sequence)      { return LocalDate.parse(sequence, DATE_FORMATTER).getDayOfYear(); }
+    public static int getDayOfYear(CharSequence sequence)   { return LocalDate.parse(sequence, DATE_FORMATTER).getDayOfYear(); }
     public static int parseTime(CharSequence sequence)
     {
         int hour = Integer.parseInt(sequence.subSequence(0, 2).toString());
